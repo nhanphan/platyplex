@@ -1,7 +1,7 @@
 import { Argument, Command, Option } from 'commander'
 import os from 'os'
 import fs from 'fs'
-import { Connection, Keypair } from '@solana/web3.js'
+import { clusterApiUrl, Connection, Keypair } from '@solana/web3.js'
 import { fatalError } from './lib/error'
 
 const DEFAULT_CONFIG_DIR = `${os.homedir()}/.platyplex`
@@ -18,25 +18,26 @@ export interface Config {
 }
 
 export interface ConfigContext {
+  configRaw: Config
   connection: Connection
   keypair: Keypair
 }
 
-const readConfig = (path: string) => {
+const loadJson = (path: string) => {
   return JSON.parse(fs.readFileSync(path).toString())
 }
 
-const saveConfig = (path: string, obj: any) => {
+const saveJson = (path: string, obj: any) => {
   return fs.writeFileSync(path, JSON.stringify(obj, null, 2))
 }
 
 if (!fs.existsSync(DEFAULT_CONFIG_DIR)) {
   fs.mkdirSync(DEFAULT_CONFIG_DIR)
-  saveConfig(DEFAULT_CONFIG_PATH, DEFAULT_CONFIG)
+  saveJson(DEFAULT_CONFIG_PATH, DEFAULT_CONFIG)
 }
 
 export const registerPrefix = (command: Command) => {
-  command
+  return command
     .option('--config <path>', 'Path to the platyplex config', DEFAULT_CONFIG_PATH)
     .option('--keypair <path>', 'Path to keypair for transactions. Overrides config')
     .option('--rpc-url <url>', 'Custom RPC server to use for transactions. Overrides config')
@@ -56,7 +57,7 @@ export const registerCommand = (command: Command) => {
     .action((mode, name, value, options) => {
       const { config } = options
       const configPath = config || DEFAULT_CONFIG_PATH
-      const configRaw = readConfig(configPath)
+      const configRaw = loadJson(configPath)
       switch (mode) {
         case 'get':
           if (!name) {
@@ -71,7 +72,7 @@ export const registerCommand = (command: Command) => {
           console.log(`Old ${name}: ${configRaw[name]}`)
           console.log(`New ${name}: ${value}`)
           configRaw[name] = value
-          saveConfig(configPath, configRaw)
+          saveJson(configPath, configRaw)
           break
         case 'list':
         default:
@@ -85,19 +86,39 @@ export const registerCommand = (command: Command) => {
 
 
 
-export const loadConfig = (options: any) => {
+export const loadConfig = (options: any): ConfigContext => {
   const configPath = options.config || DEFAULT_CONFIG_PATH
+
   let configRaw
   try {
-    configRaw = readConfig(configPath)
+    configRaw = loadJson(configPath)
   } catch (e) {
     fatalError(`Error reading config at ${configPath}`)
   }
 
-  const keypair = options.keypair || configRaw.keypair
-  if (!keypair) {
+  const keypairPath = options.keypair || configRaw.keypair
+  if (!keypairPath) {
     fatalError('No keypair found. See https://docs.solana.com/wallet-guide/file-system-wallet for information on how to generate a keypair')
   }
 
+  const env = options.env || configRaw.env
+  if (!env) {
+    fatalError(`env must be defined in the config`)
+  }
 
+  const rpcUrl = options.rpcUrl || configRaw.rpcUrl
+  const keypair = Keypair.fromSecretKey(new Uint8Array(loadJson(keypairPath)))
+  const connection = new Connection(rpcUrl ? rpcUrl : clusterApiUrl(env))
+
+  const ctx: ConfigContext = {
+    configRaw: {
+      rpcUrl,
+      env,
+      keypair: keypairPath,
+    },
+    keypair,
+    connection
+  }
+
+  return ctx
 }
