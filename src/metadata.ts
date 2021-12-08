@@ -64,7 +64,7 @@ Attributes:`)
 }
 
 export const get = (program: Command) => {
-  program.command('get')
+  registerPrefix(program.command('get'))
     .option('-m, --mint <mint>', 'mint address')
     .option('-a, --address <address>', 'metadata address')
     .option('--json', 'output single line json')
@@ -85,7 +85,6 @@ export const get = (program: Command) => {
         const printable = toPrintable(metadata)
         if (fetchUri) {
           try {
-            console.log('fetching', options)
             printable.uriData = await utils.metadata.lookup(printable.data.uri)
           } catch (e) {
             // ignore error
@@ -105,10 +104,13 @@ export const get = (program: Command) => {
     })
 }
 
+export const update = (program: Command) => {
+
+}
+
 
 export const registerCommand = (program: Command) => {
   const metaProgram = program.command('metadata')
-  registerPrefix(metaProgram)
   get(metaProgram)
 
 }

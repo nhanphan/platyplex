@@ -12,7 +12,9 @@ const DEFAULT_CONFIG = {
 }
 
 export interface Config {
-  rpcUrl: string | undefined
+  rpcUrl?: {
+    [env: string]: string
+  }
   env: string
   keypair: string
 }
@@ -49,12 +51,28 @@ export const registerPrefix = (command: Command) => {
 }
 
 export const registerCommand = (command: Command) => {
-  command
-    .command('config')
+  const configCommand = command.command('config')
+  configCommand
+    .option('--config <path>', 'Path to the platyplex config')
     .addArgument(new Argument('[mode]', 'list, get or set').choices(['get', 'set', 'list']).default('list'))
     .addArgument(new Argument('[name]', 'Config name'))
     .addArgument(new Argument('[value]', 'Config value'))
-    .action((mode, name, value, options) => {
+    .addArgument(new Argument('[subvalue]', 'Config subvalue'))
+    .addHelpText('after', `
+  
+Available config names/values/subvalues:
+  env: mainnet-beta, devnet, testnet
+  keypair: <path/to/keypair>
+  rpcUrl:
+    mainnet-beta: <url>
+    devnet: <url>
+    testnet: <url>
+
+Example config set:
+  
+  platyplex config set rpcUrl mainnet-beta https://solana-api.projectserum.com
+`)
+    .action((mode, name, value, subvalue, options) => {
       const { config } = options
       const configPath = config || DEFAULT_CONFIG_PATH
       const configRaw = loadJson(configPath)
@@ -63,21 +81,46 @@ export const registerCommand = (command: Command) => {
           if (!name) {
             fatalError('Name of config must be specified')
           }
-          console.log(`${name}: ${configRaw[name]}`)
+          const val = configRaw[name]
+          if (val && typeof val === 'object') {
+            console.log(`${name}:`)
+            Object.keys(val).forEach((subvalue) => {
+              console.log(`  ${subvalue}: ${val[subvalue]}`)
+            })
+          } else {
+            console.log(`${name}: ${val}`)
+          }
+
           break
         case 'set':
           if (!name || !value) {
             fatalError('Name and value of must be specified')
+            // TODO only allow valid config values
           }
-          console.log(`Old ${name}: ${configRaw[name]}`)
-          console.log(`New ${name}: ${value}`)
-          configRaw[name] = value
+          if (subvalue) {
+            console.log(`Old ${name} ${configRaw[value]}: ${configRaw[name]?.[value]}`)
+            console.log(`New ${name} ${configRaw[value]}: ${subvalue}`)
+            configRaw[name] = configRaw[name] || {}
+            configRaw[name][value] = subvalue
+          } else {
+            console.log(`Old ${name}: ${configRaw[name]}`)
+            console.log(`New ${name}: ${value}`)
+            configRaw[name] = value
+          }
           saveJson(configPath, configRaw)
           break
         case 'list':
         default:
           Object.keys(configRaw).forEach((k) => {
-            console.log(`${k}: ${configRaw[k]}`)
+            const val = configRaw[k]
+            if (val && typeof val === 'object') {
+              console.log(`${k}:`)
+              Object.keys(val).forEach((subvalue) => {
+                console.log(`  ${subvalue}: ${val[subvalue]}`)
+              })
+            } else {
+              console.log(`${k}: ${val}`)
+            }
           })
       }
 
@@ -106,7 +149,7 @@ export const loadConfig = (options: any): ConfigContext => {
     fatalError(`env must be defined in the config`)
   }
 
-  const rpcUrl = options.rpcUrl || configRaw.rpcUrl
+  const rpcUrl = options.rpcUrl || configRaw.rpcUrl?.[env]
   const keypair = Keypair.fromSecretKey(new Uint8Array(loadJson(keypairPath)))
   const connection = new Connection(rpcUrl ? rpcUrl : clusterApiUrl(env))
 
