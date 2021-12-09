@@ -69,7 +69,7 @@ Available config names/values/subvalues:
     testnet: <url>
 
 Example config set:
-  
+
   platyplex config set rpcUrl mainnet-beta https://solana-api.projectserum.com
 `)
     .action((mode, name, value, subvalue, options) => {
