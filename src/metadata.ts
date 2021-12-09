@@ -22,13 +22,24 @@ export interface PrintableMetadata extends MetadataData {
   owner?: string
 }
 
-export const toPrintable = (metadata: Metadata, metaJson?: MetadataJson, owner?: string): PrintableMetadata => {
-  return {
-    pubkey: metadata.pubkey.toBase58(),
-    ...metadata.toJSON().data,
-    uriData: metaJson,
-    owner
+export const fetchPrintable = (connection: Connection, metadata: Metadata, uri?: boolean, owner?: boolean): Promise<PrintableMetadata> => {
+  const promises = []
+  if (uri) {
+    promises.push(utils.metadata.lookup(metadata.data.data.uri))
   }
+  if (owner) {
+    promises.push(getOwner(connection, metadata.data.mint))
+  }
+
+  return Promise.all(promises).then((res) => {
+    const [uriData, o] = res
+    return {
+      pubkey: metadata.pubkey.toBase58(),
+      ...metadata.toJSON().data,
+      uriData,
+      owner: o
+    }
+  })
 }
 
 export const getOwner = async (connection: Connection, mint: string) => {
@@ -55,7 +66,7 @@ export const getOwner = async (connection: Connection, mint: string) => {
 
 export const prettyPrint = (printable: PrintableMetadata) => {
   console.log(`
-${printable.data.name} (${printable.data.symbol}) ${printable.primarySaleHappened ? '[sold] ' : ''}${printable.isMutable ? '[mutable]' : ''}${printable.uriData ? ` [${printable.uriData.properties.category}]` : ''}
+${printable.data.name} ${printable.data.symbol ? `(${printable.data.symbol}) ` : ''}${printable.primarySaleHappened ? '[sold] ' : ''}${printable.isMutable ? '[mutable]' : ''}${printable.uriData ? ` [${printable.uriData.properties.category}]` : ''}
 ${printable.uriData ? `
 ${printable.uriData.description}
 
@@ -77,7 +88,7 @@ Creators: (${(printable.data.sellerFeeBasisPoints / 100).toFixed(2)}% fees)`)
   }
 
   if (printable.uriData) {
-    if (printable.uriData.properties.files.length) {
+    if (printable.uriData.properties.files?.length) {
       console.log(`
 Files:`)
       printable.uriData.properties.files.forEach((f) => {
@@ -159,20 +170,8 @@ export const get = (program: Command) => {
         if (!metadata) {
           fatalError(`Token metadata not found at: ${addr.toBase58()}`)
         }
-        let uriData
-        if (fetchUri) {
-          try {
-            uriData = await utils.metadata.lookup(metadata.data.data.uri)
-          } catch (e) {
-            // ignore error
-          }
-        }
-        let owner
-        if (fetchOwner) {
-          owner = await getOwner(config.connection, metadata.data.mint)
-        }
 
-        const printable = toPrintable(metadata, uriData, owner)
+        const printable = await fetchPrintable(config.connection, metadata, fetchUri, fetchOwner)
 
         if (json) {
           console.log(JSON.stringify(printable))
@@ -217,13 +216,13 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
         exit(1) // get rid of annoying type errors
       }
       if (details) {
-        const oldMetaJson = await utils.metadata.lookup(metadata.data.data.uri)
         console.log('----------------- old meta --------------')
-        prettyPrint(toPrintable(metadata, oldMetaJson))
+        prettyPrint(await fetchPrintable(config.connection, metadata, details))
       }
       let url = uri
       if (!stringIsAValidUrl(uri)) {
         // todo do upload
+        fatalError('unimplemented')
       }
 
       const newMeta = await utils.metadata.lookup(url)
@@ -277,15 +276,97 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
 }
 
 export const list = (program: Command) => {
-  registerPrefix(program.command('update'))
-    .option('--mint-only', 'list only mints')
+  registerPrefix(program.command('list'))
+    .option('-m, --mint-list <pubkeys...>', 'find by mint list')
+    .option('-o, --owner <pubkey>', 'find by owner')
+    .option('-c, --creators <pubkey...>', 'find by creator (can be slow)')
+    .option('--mint-only', 'output only mints')
+    .option('--fetch-owner', 'fetch owner for output')
+    .option('--no-fetch-uri', "don't fetch uri metadata for output")
+    .option('--json', 'output json')
     .action(async (options) => {
       const config = loadConfig(options)
+      const { mintOnly, owner, creators, mintList, fetchOwner, fetchUri, json } = options
+
+      const filterCount = ['creators', 'mintList', 'owner'].reduce((prev, curr, i) => {
+        return prev + (options[curr] ? 1 : 0)
+      }, 0)
+
+      if (filterCount !== 1) {
+        fatalError('exactly one of: owner, creators list or mint list, can be specified')
+      }
+      let metas
+      if (owner) {
+        try {
+          metas = await Metadata.findByOwnerV2(config.connection, new PublicKey(owner))
+        } catch (e) {
+          fatalError(`Could not get metadata for owner: ${owner}`)
+        }
+      }
+      if (creators) {
+        try {
+          metas = await Metadata.findMany(config.connection, {
+            creators
+          })
+        } catch (e) {
+          fatalError(`Could not get metadata for creators: ${creators}`)
+        }
+      }
+      if (mintList) {
+        try {
+          // TODO batch  requests
+          const metas = Promise.all(mintList.map(async (mint: string) => {
+            const addr = await Metadata.getPDA(mint)
+            return Metadata.load(config.connection, addr)
+          }))
+
+        } catch (e) {
+          fatalError(`Could not get metadata for owner: ${owner}`)
+        }
+      }
+      const metaList = metas as Metadata[]
+      if (mintOnly) {
+        if (fetchOwner) {
+          const res = await Promise.all(metaList.map(async (meta) => {
+            const mint = meta.data.mint
+            const o = await getOwner(config.connection, mint)
+            return [mint, o, meta.data.data.name]
+          }))
+          const ownerMap: { [o: string]: string[][] } = {}
+          res.forEach((r) => {
+            const [mint, o, name] = r
+            ownerMap[o] = ownerMap[o] || []
+            ownerMap[o].push([mint, name])
+          })
+          if (json) {
+            console.log(JSON.stringify(ownerMap))
+          } else {
+            Object.keys(ownerMap).forEach((o) => {
+              console.log(`owner: ${o}`)
+              ownerMap[o].forEach(([mint, name]) => {
+                console.log(`  ${mint} ${name}`)
+              })
+            })
+          }
+        } else {
+          if (json) {
+            console.log(JSON.stringify(metaList.map((meta) => [meta.data.mint, meta.data.data.name])))
+          } else {
+            metaList.forEach((meta) => console.log(`${meta.data.mint} ${meta.data.data.name}`))
+          }
+        }
+      } else {
+        const printables = await Promise.all(metaList.map(async (meta) => {
+          return fetchPrintable(config.connection, meta, fetchUri, fetchOwner)
+        }))
+        printables.forEach((p) => prettyPrint(p))
+      }
     })
 }
 
 export const registerCommand = (program: Command) => {
   const metaProgram = program.command('metadata')
   get(metaProgram)
-
+  update(metaProgram)
+  list(metaProgram)
 }

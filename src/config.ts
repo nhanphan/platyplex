@@ -3,6 +3,7 @@ import os from 'os'
 import fs from 'fs'
 import { clusterApiUrl, Connection, Keypair } from '@solana/web3.js'
 import { fatalError } from './lib/error'
+import { loadJson, saveJson } from './lib/fs'
 
 const DEFAULT_CONFIG_DIR = `${os.homedir()}/.platyplex`
 const DEFAULT_CONFIG_PATH = `${DEFAULT_CONFIG_DIR}/config`
@@ -23,14 +24,6 @@ export interface ConfigContext {
   configRaw: Config
   connection: Connection
   keypair: Keypair
-}
-
-const loadJson = (path: string) => {
-  return JSON.parse(fs.readFileSync(path).toString())
-}
-
-const saveJson = (path: string, obj: any) => {
-  return fs.writeFileSync(path, JSON.stringify(obj, null, 2))
 }
 
 if (!fs.existsSync(DEFAULT_CONFIG_DIR)) {
