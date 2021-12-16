@@ -2,6 +2,8 @@ import { Argument, Command, Option } from 'commander'
 import os from 'os'
 import fs from 'fs'
 import { clusterApiUrl, Connection, Keypair } from '@solana/web3.js'
+import log from 'loglevel'
+
 import { fatalError } from './lib/error'
 import { loadJson, saveJson } from './lib/fs'
 
@@ -10,6 +12,7 @@ const DEFAULT_CONFIG_PATH = `${DEFAULT_CONFIG_DIR}/config`
 
 const DEFAULT_CONFIG = {
   env: 'mainnet-beta',
+  logLevel: 'info'
 }
 
 export interface Config {
@@ -18,6 +21,7 @@ export interface Config {
   }
   env: string
   keypair: string
+  logLevel?: 'info' | 'debug' | 'trace'
 }
 
 export interface ConfigContext {
@@ -36,6 +40,7 @@ export const registerPrefix = (command: Command) => {
     .option('--config <path>', 'Path to the platyplex config', DEFAULT_CONFIG_PATH)
     .option('--keypair <path>', 'Path to keypair for transactions. Overrides config')
     .option('--rpc-url <url>', 'Custom RPC server to use for transactions. Overrides config')
+    .addOption(new Option('--log-level <level>', 'Logging level to stdout. Overrides config').choices(['trace', 'debug', 'info']))
     .addOption(
       new Option('--env <env>', 'Solana environment. Overrides config. Is ignored if rpc-url is specified.')
         .choices(['devnet', 'testnet', 'mainnet-beta'])
@@ -76,12 +81,12 @@ Example config set:
           }
           const val = configRaw[name]
           if (val && typeof val === 'object') {
-            console.log(`${name}:`)
+            log.info(`${name}:`)
             Object.keys(val).forEach((subvalue) => {
-              console.log(`  ${subvalue}: ${val[subvalue]}`)
+              log.info(`  ${subvalue}: ${val[subvalue]}`)
             })
           } else {
-            console.log(`${name}: ${val}`)
+            log.info(`${name}: ${val}`)
           }
 
           break
@@ -91,13 +96,13 @@ Example config set:
             // TODO only allow valid config values
           }
           if (subvalue) {
-            console.log(`Old ${name} ${configRaw[value]}: ${configRaw[name]?.[value]}`)
-            console.log(`New ${name} ${configRaw[value]}: ${subvalue}`)
+            log.info(`Old ${name} ${configRaw[value]}: ${configRaw[name]?.[value]}`)
+            log.info(`New ${name} ${configRaw[value]}: ${subvalue}`)
             configRaw[name] = configRaw[name] || {}
             configRaw[name][value] = subvalue
           } else {
-            console.log(`Old ${name}: ${configRaw[name]}`)
-            console.log(`New ${name}: ${value}`)
+            log.info(`Old ${name}: ${configRaw[name]}`)
+            log.info(`New ${name}: ${value}`)
             configRaw[name] = value
           }
           saveJson(configPath, configRaw)
@@ -107,12 +112,12 @@ Example config set:
           Object.keys(configRaw).forEach((k) => {
             const val = configRaw[k]
             if (val && typeof val === 'object') {
-              console.log(`${k}:`)
+              log.info(`${k}:`)
               Object.keys(val).forEach((subvalue) => {
-                console.log(`  ${subvalue}: ${val[subvalue]}`)
+                log.info(`  ${subvalue}: ${val[subvalue]}`)
               })
             } else {
-              console.log(`${k}: ${val}`)
+              log.info(`${k}: ${val}`)
             }
           })
       }
@@ -145,6 +150,8 @@ export const loadConfig = (options: any): ConfigContext => {
   const rpcUrl = options.rpcUrl || configRaw.rpcUrl?.[env]
   const keypair = Keypair.fromSecretKey(new Uint8Array(loadJson(keypairPath)))
   const connection = new Connection(rpcUrl ? rpcUrl : clusterApiUrl(env))
+  const logLevel = options.logLevel || configRaw.logLevel || 'info'
+  log.setLevel(logLevel)
 
   const ctx: ConfigContext = {
     configRaw: {

@@ -1,5 +1,6 @@
 import { Command } from "commander"
 import { exit } from "process"
+import log from 'loglevel'
 
 function errorColor(str: string) {
   // Add ANSI escape codes to display text in red.
@@ -14,11 +15,11 @@ export const configure = (program: Command) => {
   })
 }
 
-export const fatalError = (str: string, e?: Error) => {
+export const fatalError = (str: string, e?: any) => {
   if (e) {
-    console.error(str, e)
+    log.error(str, e)
   } else {
-    console.error(str)
+    log.error(str)
   }
   exit(1)
 }

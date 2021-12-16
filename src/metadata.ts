@@ -1,6 +1,5 @@
 import { Argument, Command, Option, program } from 'commander'
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
-import { URL } from 'url'
 import util from 'util'
 import {
   Metadata,
@@ -8,6 +7,7 @@ import {
   MetadataDataData,
   UpdateMetadata,
 } from '@metaplex-foundation/mpl-token-metadata'
+import log from 'loglevel'
 
 import { registerPrefix, loadConfig } from './config'
 import { fatalError } from './lib/error'
@@ -15,6 +15,7 @@ import { Connection, ParsedAccountData, PublicKey } from '@solana/web3.js'
 import { MetadataJson, programs, utils, actions } from '@metaplex/js'
 import { exit } from 'process'
 import { Wallet } from '@project-serum/anchor'
+import { isUrl } from './lib/util'
 
 export interface PrintableMetadata extends MetadataData {
   pubkey: string
@@ -65,7 +66,7 @@ export const getOwner = async (connection: Connection, mint: string) => {
 }
 
 export const prettyPrint = (printable: PrintableMetadata) => {
-  console.log(`
+  log.info(`
 ${printable.data.name} ${printable.data.symbol ? `(${printable.data.symbol}) ` : ''}${printable.primarySaleHappened ? '[sold] ' : ''}${printable.isMutable ? '[mutable]' : ''}${printable.uriData ? ` [${printable.uriData.properties.category}]` : ''}
 ${printable.uriData ? `
 ${printable.uriData.description}
@@ -80,52 +81,52 @@ Pubkey:     ${printable.pubkey}
 Mint:       ${printable.mint} ${printable.isMutable ? `
 UpdateAuth: ${printable.updateAuthority}` : ''}`)
   if (printable.data.creators) {
-    console.log(`
+    log.info(`
 Creators: (${(printable.data.sellerFeeBasisPoints / 100).toFixed(2)}% fees)`)
     printable.data.creators?.forEach((c) => {
-      console.log(`  ${c.address}: ${c.share} ${c.verified ? '[verified]' : ''}`)
+      log.info(`  ${c.address}: ${c.share} ${c.verified ? '[verified]' : ''}`)
     })
   }
 
   if (printable.uriData) {
     if (printable.uriData.properties.files?.length) {
-      console.log(`
+      log.info(`
 Files:`)
       printable.uriData.properties.files.forEach((f) => {
-        console.log(`  [${f.type}] ${f.uri}`)
+        log.info(`  [${f.type}] ${f.uri}`)
       })
 
     }
     if (printable.uriData.attributes) {
-      console.log(`
+      log.info(`
 Attributes:`)
       printable.uriData.attributes.forEach((a) => {
-        console.log(`  ${a.trait_type}: ${a.value}`)
+        log.info(`  ${a.trait_type}: ${a.value}`)
       })
     }
 
   }
 }
 
-const validateMetadata = (metadata: MetadataJson) => {
+export const validateMetadata = (metadata: MetadataJson) => {
   if (!metadata.name) {
-    console.error('invalid name')
+    log.error('invalid name')
     return false
   }
   if (!metadata.image) {
-    console.error('invalid image')
+    log.error('invalid image')
     return false
   }
   if (!metadata.properties) {
-    console.error('no properties found')
+    log.error('no properties found')
     return false
   }
   if (isNaN(metadata.seller_fee_basis_points)) {
-    console.error('invalid seller_fee_basis_points')
+    log.error('invalid seller_fee_basis_points')
     return false
   }
   if (!Array.isArray(metadata.properties.creators)) {
-    console.error('invalid creators')
+    log.error('invalid creators')
     return false
   }
 
@@ -134,20 +135,11 @@ const validateMetadata = (metadata: MetadataJson) => {
     metaCreators.some(creator => !creator.address) ||
     metaCreators.reduce((sum, creator) => creator.share + sum, 0) !== 100
   ) {
-    console.error('invalid creator share sum or address')
+    log.error('invalid creator share sum or address')
     return false
   }
 
   return true
-}
-
-const stringIsAValidUrl = (s: string) => {
-  try {
-    new URL(s)
-    return true
-  } catch (err) {
-    return false
-  }
 }
 
 export const get = (program: Command) => {
@@ -174,9 +166,9 @@ export const get = (program: Command) => {
         const printable = await fetchPrintable(config.connection, metadata, fetchUri, fetchOwner)
 
         if (json) {
-          console.log(JSON.stringify(printable))
+          log.info(JSON.stringify(printable))
         } else if (jsonMultiline) {
-          console.log(JSON.stringify(printable, null, 2))
+          log.info(JSON.stringify(printable, null, 2))
         } else {
           prettyPrint(printable)
         }
@@ -194,6 +186,7 @@ export const update = (program: Command) => {
     .option('-a, --address <address>', 'metadata address')
     .option('--no-details', 'hide metadata before/after')
     .option('--new-update-authority <pubkey>', 'change to a new update authority')
+    // TODO update auth only
     .addOption(new Option('--upload-provider <provider>', 'storage provider if a local filepath is specified for the metadata json').choices(['arweave']))
     .addHelpText('before', `
 Update a mutable Token Metadata. WARNING gas/upload fees will apply!
@@ -216,11 +209,11 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
         exit(1) // get rid of annoying type errors
       }
       if (details) {
-        console.log('----------------- old meta --------------')
+        log.info('----------------- old meta --------------')
         prettyPrint(await fetchPrintable(config.connection, metadata, details))
       }
       let url = uri
-      if (!stringIsAValidUrl(uri)) {
+      if (!isUrl(uri)) {
         // todo do upload
         fatalError('unimplemented')
       }
@@ -231,8 +224,8 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
       }
 
       if (details) {
-        console.log('----------------- new meta --------------')
-        console.log(util.inspect(newMeta))
+        log.info('----------------- new meta --------------')
+        log.info(util.inspect(newMeta))
       }
       const data = new MetadataDataData({
         creators: newMeta.properties.creators,
@@ -268,7 +261,7 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
         await config.connection.confirmTransaction(tx, 'confirmed')
         console.info(`metadata updated. mint: ${metadata.data.mint} metaAddr: ${address} tx: ${tx}`)
       } catch (e) {
-        console.error(e)
+        log.error(e)
         fatalError('Update transaction failed')
       }
 
@@ -293,7 +286,7 @@ export const list = (program: Command) => {
       }, 0)
 
       if (filterCount !== 1) {
-        fatalError('exactly one of: owner, creators list or mint list, can be specified')
+        fatalError('exactly one of: owner, creators list or mint list, must be specified')
       }
       let metas
       if (owner) {
@@ -339,20 +332,20 @@ export const list = (program: Command) => {
             ownerMap[o].push([mint, name])
           })
           if (json) {
-            console.log(JSON.stringify(ownerMap))
+            log.info(JSON.stringify(ownerMap))
           } else {
             Object.keys(ownerMap).forEach((o) => {
-              console.log(`owner: ${o}`)
+              log.info(`owner: ${o}`)
               ownerMap[o].forEach(([mint, name]) => {
-                console.log(`  ${mint} ${name}`)
+                log.info(`  ${mint} ${name}`)
               })
             })
           }
         } else {
           if (json) {
-            console.log(JSON.stringify(metaList.map((meta) => [meta.data.mint, meta.data.data.name])))
+            log.info(JSON.stringify(metaList.map((meta) => [meta.data.mint, meta.data.data.name])))
           } else {
-            metaList.forEach((meta) => console.log(`${meta.data.mint} ${meta.data.data.name}`))
+            metaList.forEach((meta) => log.info(`${meta.data.mint} ${meta.data.data.name}`))
           }
         }
       } else {
