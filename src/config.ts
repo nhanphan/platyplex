@@ -74,6 +74,7 @@ Example config set:
       const { config } = options
       const configPath = config || DEFAULT_CONFIG_PATH
       const configRaw = loadJson(configPath)
+      log.setLevel(configRaw.logLevel || DEFAULT_CONFIG.logLevel)
       switch (mode) {
         case 'get':
           if (!name) {

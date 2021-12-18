@@ -17,12 +17,7 @@ import { Wallet } from '@project-serum/anchor'
 import { mintNFT } from '@metaplex/js/lib/actions'
 import { isUrl } from './lib/util'
 import { validateMetadata } from './metadata'
-import { loadJson, saveJson } from './lib/fs'
-
-const enum MetaLocation {
-  Uri = 'uri',
-  File = 'file'
-}
+import { findTargets, loadJson, saveJson, TargetType } from './lib/fs'
 
 interface MintResult {
   target?: string
@@ -61,33 +56,10 @@ export const registerCommand = (program: Command) => {
       }
 
       const metas: {
-        target: string,
-        type: MetaLocation
+        path: string,
+        type: TargetType
         meta?: MetadataJson
-      }[] = []
-      targets.forEach((target: string) => {
-        if (isUrl(target)) {
-          metas.push({
-            target,
-            type: MetaLocation.Uri
-          })
-        } else if (fs.existsSync(target)) {
-          if (fs.lstatSync(target).isDirectory()) {
-            const files = fs.readdirSync(target)
-            files.forEach((f) => {
-              metas.push({
-                target: f,
-                type: MetaLocation.File
-              })
-            })
-          } else {
-            metas.push({
-              target,
-              type: MetaLocation.File
-            })
-          }
-        }
-      })
+      }[] = findTargets(targets)
 
       const results: MintResult[] = []
 
@@ -98,20 +70,20 @@ export const registerCommand = (program: Command) => {
       for (let i = 0; i < metas.length; i++) {
         const meta = metas[i]
         const result: MintResult = {
-          target: meta.target
+          target: meta.path
         }
-        if (meta.type === MetaLocation.File) {
+        if (meta.type === TargetType.File) {
           fatalError('file unimplemented')
         } else {
           try {
-            meta.meta = await utils.metadata.lookup(meta.target)
+            meta.meta = await utils.metadata.lookup(meta.path)
             if (!validateMetadata(meta.meta)) {
-              log.warn(`Inavlid metadata at ${meta.target}`)
+              log.warn(`Inavlid metadata at ${meta.path}`)
               meta.meta = undefined
               result.error = 'Invalid metadata'
             }
           } catch (e) {
-            log.warn(`Failed to fetch metadata at ${meta.target}`)
+            log.warn(`Failed to fetch metadata at ${meta.path}`)
             result.error = 'Failed to fetch metadata'
           }
         }
@@ -120,7 +92,7 @@ export const registerCommand = (program: Command) => {
           try {
             const response = await actions.mintNFT({
               connection: config.connection,
-              uri: meta.target,
+              uri: meta.path,
               wallet: new Wallet(config.keypair)
             })
             result.name = meta.meta.name
@@ -128,7 +100,7 @@ export const registerCommand = (program: Command) => {
             result.metadata = response.metadata.toBase58()
             result.txId = response.txId
           } catch (e) {
-            log.warn(`Failed to mint ${meta.target}`)
+            log.warn(`Failed to mint ${meta.path}`)
             result.error = 'Failed to mint'
           }
         }

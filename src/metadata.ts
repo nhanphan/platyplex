@@ -16,6 +16,7 @@ import { MetadataJson, programs, utils, actions } from '@metaplex/js'
 import { exit } from 'process'
 import { Wallet } from '@project-serum/anchor'
 import { isUrl } from './lib/util'
+import { findTargets, loadJson, TargetType } from './lib/fs'
 
 export interface PrintableMetadata extends MetadataData {
   pubkey: string
@@ -357,9 +358,37 @@ export const list = (program: Command) => {
     })
 }
 
+const validate = (program: Command) => {
+  registerPrefix(program.command('validate'))
+    .addArgument(new Argument('<targets...>', 'filepath(s), URI(s), or folder to json metadata'))
+    .action(async (targets, options) => {
+      const config = loadConfig(options)
+      if (!targets || !targets.length) {
+        fatalError('At least one metadata JSON must be speficied as an argument')
+      }
+      const metaTargets = findTargets(targets)
+      for (const target of metaTargets) {
+        let meta
+        if (target.type === TargetType.File) {
+          meta = loadJson(target.path) as MetadataJson
+        } else {
+          meta = await utils.metadata.lookup(target.path)
+        }
+        log.info('------------------------------------------')
+        log.info(`${meta.name} [${target.path}]`)
+        if (validateMetadata(meta)) {
+          log.info('[VALID]')
+        } else {
+          log.info('[INVALID]')
+        }
+      }
+    })
+}
+
 export const registerCommand = (program: Command) => {
   const metaProgram = program.command('metadata')
   get(metaProgram)
   update(metaProgram)
   list(metaProgram)
+  validate(metaProgram)
 }
