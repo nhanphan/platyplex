@@ -27,6 +27,10 @@ interface MintResult {
   name?: string
 }
 
+interface MintRetryCache {
+  [index: string]: MintResult
+}
+
 const mintResultToString = (result: MintResult): string => {
   if (result.error) {
     return `[error]  ${result.error} ${result.target} `
@@ -43,14 +47,13 @@ const mintResultToString = (result: MintResult): string => {
 export const registerCommand = (program: Command) => {
   registerPrefix(program.command('mint'))
     .addArgument(new Argument('[targets...]', 'filepath(s), URI(s), or folder to json metadata'))
-    .option('--json', 'output JSON')
-    .option('--append <file>', 'append to output file')
+    .option('--retry-cache <cache>', 'use cache to retry in an idempotent manner')
     .option('--no-retry', 'do not retry on failure')
     .option('--json-list <file>', 'a JSON list of files/URIs to mint')
     // .option('--immutable', 'mint immutable NFTs. Default is mutable') // TODO
     .action(async (targets, options) => {
       const config = loadConfig(options)
-      const { json, append, immutable, jsonList, retry } = options
+      const { immutable, jsonList, retry, retryCache } = options
       if (!targets.length && !jsonList) {
         fatalError('At least one metadata JSON or JSON list must be speficied as an argument')
       }
@@ -72,91 +75,79 @@ export const registerCommand = (program: Command) => {
         }
       }
 
+      let cache: MintRetryCache = {}
+      if (retryCache && fs.existsSync(retryCache)) {
+        cache = loadJson(retryCache)
+      }
+
       const metas: {
         path: string,
         type: TargetType
         meta?: MetadataJson
       }[] = findTargets(targets)
 
-      const results: MintResult[] = []
+      let errors = 0
 
-      if (json && !append) {
-        // try to print json as we go
-        log.info('[')
-      }
       for (let i = 0; i < metas.length; i++) {
         const meta = metas[i]
-        const result: MintResult = {
-          target: meta.path
-        }
-        if (meta.type === TargetType.File) {
-          fatalError('file unimplemented')
-        } else {
-          try {
-            meta.meta = await utils.metadata.lookup(meta.path)
-            if (!validateMetadata(meta.meta)) {
-              log.warn(`Invalid metadata at ${meta.path}`)
-              meta.meta = undefined
-              result.error = 'Invalid metadata'
-            }
-          } catch (e) {
-            log.warn(`Failed to fetch metadata at ${meta.path}`)
-            result.error = 'Failed to fetch metadata'
-          }
-        }
 
-        if (meta.meta) {
-          let success = false
-          let retries = retry ? 5 : 1
-          while (!success && retries > 0) {
+        if (!cache[i]?.txId) {
+          const result: MintResult = {
+            target: meta.path
+          }
+          if (meta.type === TargetType.File) {
+            fatalError('file unimplemented')
+          } else {
+
             try {
-              const response = await actions.mintNFT({
-                connection: config.connection,
-                uri: meta.path,
-                wallet: new Wallet(config.keypair)
-              })
-              result.name = meta.meta.name
-              result.mint = response.mint.toBase58()
-              result.metadata = response.metadata.toBase58()
-              result.txId = response.txId
-              success = true
+              meta.meta = await utils.metadata.lookup(meta.path)
+              if (!validateMetadata(meta.meta)) {
+                log.warn(`Invalid metadata at ${meta.path}`)
+                meta.meta = undefined
+                result.error = 'Invalid metadata'
+              }
             } catch (e) {
-              log.warn(`Failed to mint ${meta.path}`)
-              retries--
-              if (retries) {
-                log.warn('Retrying in 2s...')
-                await sleep(2000)
+              log.warn(`Failed to fetch metadata at ${meta.path}`)
+              result.error = 'Failed to fetch metadata'
+            }
+          }
+
+          if (meta.meta) {
+            let success = false
+            let retries = retry ? 5 : 1
+            while (!success && retries > 0) {
+              try {
+                const response = await actions.mintNFT({
+                  connection: config.connection,
+                  uri: meta.path,
+                  wallet: new Wallet(config.keypair)
+                })
+                result.name = meta.meta.name
+                result.mint = response.mint.toBase58()
+                result.metadata = response.metadata.toBase58()
+                result.txId = response.txId
+                success = true
+              } catch (e) {
+                log.warn(`Failed to mint ${meta.path}`)
+                retries--
+                if (retries) {
+                  log.warn('Retrying in 2s...')
+                  await sleep(2000)
+                }
               }
             }
-          }
-          if (!success) {
-            result.error = `Failed to mint`
+            if (!success) {
+              result.error = `Failed to mint`
+              errors++
+            }
+            cache[i] = result
+            log.info(mintResultToString(result))
+            if (retryCache) {
+              saveJson(retryCache, cache)
+            }
           }
         }
-        results.push(result)
-        if (append) {
-          const str = mintResultToString(result)
-          log.info(str)
-          if (!json) {
-            fs.appendFileSync(append, str)
-          }
-        } else if (json) {
-          log.info(`${JSON.stringify(result, null, 2)}${i + 1 < metas.length ? ',' : ''}`)
-        } else {
-          log.info(mintResultToString(result))
-        }
       }
-      if (json && !append) {
-        // try to print json as we go
-        log.info(']')
-      }
-
-      if (json && append) {
-        let appendLog = []
-        if (fs.existsSync(append)) {
-          appendLog = loadJson(append)
-        }
-        saveJson(append, appendLog.concat(results))
-      }
+      log.info(`Completed with ${errors} errors`)
     })
 }

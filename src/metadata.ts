@@ -111,6 +111,7 @@ Attributes:`)
 
 export const validateMetadata = (metadata: MetadataJson) => {
   if (!metadata.name) {
+    // TODO check max name size
     log.error('invalid name')
     return false
   }
@@ -272,17 +273,18 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
 export const list = (program: Command) => {
   registerPrefix(program.command('list'))
     .option('-m, --mint-list <pubkeys...>', 'find by mint list')
+    .option('--mint-list-json <file>', 'JSON fie containing a list of mints')
     .option('-o, --owner <pubkey>', 'find by owner')
-    .option('-c, --creators <pubkey...>', 'find by creator (can be slow)')
+    .option('-c, --creators <pubkey...>', 'find by creator (can be slow, minutes)')
     .option('--mint-only', 'output only mints')
     .option('--fetch-owner', 'fetch owner for output')
     .option('--no-fetch-uri', "don't fetch uri metadata for output")
     .option('--json', 'output json')
     .action(async (options) => {
       const config = loadConfig(options)
-      const { mintOnly, owner, creators, mintList, fetchOwner, fetchUri, json } = options
+      const { mintOnly, owner, creators, mintList, fetchOwner, fetchUri, json, mintListJson } = options
 
-      const filterCount = ['creators', 'mintList', 'owner'].reduce((prev, curr, i) => {
+      const filterCount = ['creators', 'mintList', 'owner', 'mintListJson'].reduce((prev, curr, i) => {
         return prev + (options[curr] ? 1 : 0)
       }, 0)
 
@@ -306,7 +308,19 @@ export const list = (program: Command) => {
           fatalError(`Could not get metadata for creators: ${creators}`)
         }
       }
-      if (mintList) {
+      let mints = mintList
+      if (mintListJson) {
+        mints = loadJson(mintListJson)
+        if (!Array.isArray(mints)) {
+          fatalError('Expected list for mint list JSON')
+        }
+        for (const mint of mints) {
+          if (typeof mint != 'string') {
+            fatalError(`Expected mint list JSON item to be a string. Found ${mint}`)
+          }
+        }
+      }
+      if (mints) {
         try {
           // TODO batch  requests
           const metas = Promise.all(mintList.map(async (mint: string) => {

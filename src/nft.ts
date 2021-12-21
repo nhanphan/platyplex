@@ -1,13 +1,26 @@
 import { Argument, Command, Option, program } from 'commander'
 import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import log from 'loglevel'
+import fs from 'fs'
 import { Connection, Keypair, PublicKey, sendAndConfirmTransaction, Transaction } from '@solana/web3.js'
 
 import { loadConfig, registerPrefix } from './config'
 import { fatalError } from './lib/error'
-import { loadJson } from './lib/fs'
+import { loadJson, saveJson } from './lib/fs'
 import { sendTransactionWithRetryWithKeypair } from './lib/transaction'
 
+interface AirdropItem {
+  mint: string
+  to: string
+}
+
+interface RetryCache {
+  [mint: string]: {
+    to: string
+    txid?: string
+    date?: string
+  }
+}
 
 const doTransfer = async (connection: Connection, mint: string, from: Keypair, to: string | PublicKey) => {
   const rKey = new PublicKey(to)
@@ -84,11 +97,13 @@ const transfer = (program: Command) => {
 }
 
 const airdrop = (program: Command) => {
-  registerPrefix(program.command('transfer'))
-    .argument('<json>', 'JSON file for airdrop config of format: [{mint: "mmmmmm..", to: "aaaaa..."}, {...}, ...] The owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
+  registerPrefix(program.command('airdrop'))
+    .argument('<json>', 'JSON file for airdrop config of format: [{"mint": "mmmmmm..", "to": "aaaaa..."}, {...}, ...] The owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
+    .option('--retry-cache <cache>', 'use cache to retry in an idempotent manner')
     .action(async (json, options) => {
+      const { retryCache } = options
       const config = loadConfig(options)
-      const airdrops = loadJson(json)
+      const airdrops: AirdropItem[] = loadJson(json)
 
       if (!Array.isArray(airdrops)) {
         fatalError('Invalid airdrop config format, expect array')
@@ -98,18 +113,44 @@ const airdrop = (program: Command) => {
           fatalError(`Invalid airdrop array item. Expected "mint" and "to" fields. Found: ${a}`)
         }
       }
-      for (const a of airdrops) {
+
+      let cache: RetryCache = {}
+      if (retryCache && fs.existsSync(retryCache)) {
         try {
-          const { txid } = await doTransfer(config.connection, a.mint, config.keypair, a.to)
-          log.info(`Successfully transferred ${a.mint} from ${config.keypair.publicKey.toBase58()} to ${a.to} tx: ${txid}`)
+          cache = loadJson(retryCache)
         } catch (e) {
-          log.error(`Failed to transfer ${a.mint}`)
+          fatalError('Could not load cache')
         }
       }
+      let errors = 0
+      for (const a of airdrops) {
+        const { mint, to } = a
+        cache[mint] = cache[mint] || {
+          to,
+          date: new Date().toISOString()
+        }
+        if (!cache[mint].txid) {
+          try {
+            const { txid } = await doTransfer(config.connection, mint, config.keypair, to)
+            log.info(`Successfully transferred ${mint} from ${config.keypair.publicKey.toBase58()} to ${to} tx: ${txid}`)
+            cache[mint].txid = txid
+            cache[mint].date = new Date().toISOString()
+            if (retryCache) {
+              saveJson(retryCache, cache)
+            }
+          } catch (e) {
+            log.error(`Failed to transfer ${a.mint}`)
+            errors++
+          }
+        }
+      }
+      log.info(`Completed with ${errors} errors`)
+
     })
 }
 
 export const registerCommand = (program: Command) => {
   const tokenProgram = program.command('nft')
   transfer(tokenProgram)
+  airdrop(tokenProgram)
 }
