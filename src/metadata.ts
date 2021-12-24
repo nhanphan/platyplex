@@ -15,7 +15,7 @@ import { Connection, ParsedAccountData, PublicKey } from '@solana/web3.js'
 import { MetadataJson, programs, utils, actions } from '@metaplex/js'
 import { exit } from 'process'
 import { Wallet } from '@project-serum/anchor'
-import { isUrl } from './lib/util'
+import { batch, batchMap, isUrl } from './lib/util'
 import { findTargets, loadJson, TargetType } from './lib/fs'
 
 export interface PrintableMetadata extends MetadataData {
@@ -322,24 +322,24 @@ export const list = (program: Command) => {
       }
       if (mints) {
         try {
-          // TODO batch  requests
-          const metas = Promise.all(mintList.map(async (mint: string) => {
+          metas = await batchMap<string>(mints, 20, async (mint) => {
             const addr = await Metadata.getPDA(mint)
             return Metadata.load(config.connection, addr)
-          }))
-
+          })
         } catch (e) {
-          fatalError(`Could not get metadata for owner: ${owner}`)
+          fatalError(`Could not get metadata for mint`, e)
         }
       }
       const metaList = metas as Metadata[]
       if (mintOnly) {
         if (fetchOwner) {
-          const res = await Promise.all(metaList.map(async (meta) => {
+          const batches = batch(metaList, 20)
+          const res = await batchMap<Metadata>(metaList, 20, async (meta) => {
             const mint = meta.data.mint
             const o = await getOwner(config.connection, mint)
             return [mint, o, meta.data.data.name]
-          }))
+          })
+
           const ownerMap: { [o: string]: string[][] } = {}
           res.forEach((r) => {
             const [mint, o, name] = r
@@ -347,7 +347,7 @@ export const list = (program: Command) => {
             ownerMap[o].push([mint, name])
           })
           if (json) {
-            log.info(JSON.stringify(ownerMap))
+            log.info(JSON.stringify(ownerMap, null, 2))
           } else {
             Object.keys(ownerMap).forEach((o) => {
               log.info(`owner: ${o}`)
@@ -364,10 +364,14 @@ export const list = (program: Command) => {
           }
         }
       } else {
-        const printables = await Promise.all(metaList.map(async (meta) => {
+        const printables = await batchMap(metaList, 20, async (meta) => {
           return fetchPrintable(config.connection, meta, fetchUri, fetchOwner)
-        }))
-        printables.forEach((p) => prettyPrint(p))
+        })
+        if (json) {
+          log.info(JSON.stringify(printables, null, 2))
+        } else {
+          printables.forEach((p) => prettyPrint(p))
+        }
       }
     })
 }

@@ -98,7 +98,7 @@ const transfer = (program: Command) => {
 
 const airdrop = (program: Command) => {
   registerPrefix(program.command('airdrop'))
-    .argument('<json>', 'JSON file for airdrop config of format: [{"mint": "mmmmmm..", "to": "aaaaa..."}, {...}, ...] The owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
+    .argument('<json>', 'JSON file for airdrop config of format: [{"mint": "mmmmmm..", "to": "aaaaa..."}, {...}, ...] The current owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
     .option('--retry-cache <cache>', 'use cache to retry in an idempotent manner')
     .action(async (json, options) => {
       const { retryCache } = options
