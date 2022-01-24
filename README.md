@@ -1,6 +1,6 @@
 # Platyplex
 
-A multitool for the [Metaplex](https://github.com/metaplex-foundation/metaplex) NFT ecosystem, for everything the [Metaplex CLIs](https://github.com/metaplex-foundation/metaplex/tree/master/js/packages/cli) don't do.
+A multitool for the [Metaplex](https://github.com/metaplex-foundation/metaplex) NFT ecosystem, for everything the [Metaplex CLI](https://github.com/metaplex-foundation/metaplex/tree/master/js/packages/cli) doesn't do.
 
 ## Quickstart
 

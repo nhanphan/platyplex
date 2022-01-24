@@ -16,9 +16,7 @@ const DEFAULT_CONFIG = {
 }
 
 export interface Config {
-  rpcUrl?: {
-    [env: string]: string
-  }
+  rpcUrl: string
   env: string
   keypair: string
   logLevel?: 'info' | 'debug' | 'trace'
@@ -148,9 +146,9 @@ export const loadConfig = (options: any): ConfigContext => {
     fatalError(`env must be defined in the config`)
   }
 
-  const rpcUrl = options.rpcUrl || configRaw.rpcUrl?.[env]
+  const rpcUrl: string = options.rpcUrl || configRaw.rpcUrl?.[env] || clusterApiUrl(env)
   const keypair = Keypair.fromSecretKey(new Uint8Array(loadJson(keypairPath)))
-  const connection = new Connection(rpcUrl ? rpcUrl : clusterApiUrl(env))
+  const connection = new Connection(rpcUrl)
   const logLevel = options.logLevel || configRaw.logLevel || 'info'
   log.setLevel(logLevel)
 

@@ -26,7 +26,7 @@ const doTransfer = async (connection: Connection, mint: string, from: Keypair, t
   const rKey = new PublicKey(to)
   const token = new Token(connection, new PublicKey(mint), TOKEN_PROGRAM_ID, from)
 
-  log.debug('Creating associated accounts')
+  log.debug('Creating associated accounts for ' + rKey, from.publicKey.toBase58())
   const toAccount = await token.getOrCreateAssociatedAccountInfo(rKey)
   const fromAccount = await token.getOrCreateAssociatedAccountInfo(from.publicKey)
 
@@ -90,7 +90,7 @@ const transfer = (program: Command) => {
 
           log.info(`Successfully transferred ${mint} from ${config.keypair.publicKey.toBase58()} to ${recipient} tx: ${txid}`)
         } catch (e) {
-          log.error(`Failed to transfer ${mint}`)
+          log.error(`Failed to transfer ${mint}`, e)
         }
       }
     })
@@ -140,6 +140,7 @@ const airdrop = (program: Command) => {
             }
           } catch (e) {
             log.error(`Failed to transfer ${a.mint}`)
+            log.debug(e)
             errors++
           }
         }

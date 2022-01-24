@@ -24,35 +24,60 @@ export interface Target {
   path: string
 }
 
+export const isDirectory = (path: string) => {
+  return fs.lstatSync(path).isDirectory()
+}
+
+export const findFiles = (paths: string[]): string[] => {
+  const results: string[] = []
+  for (const path of paths) {
+    if (!fs.existsSync(path)) {
+      throw new Error(`${path} does not exist`)
+    }
+    if (isDirectory(path)) {
+      const files = fs.readdirSync(path)
+      files.forEach((f) => {
+        // TODO check whether this is absolute path
+        if (!isDirectory(f)) {
+          results.push(f)
+        }
+      })
+    } else {
+      results.push(path)
+    }
+  }
+  return results
+}
+
 export const findTargets = (paths: string[]): Target[] => {
   const results: Target[] = []
   paths.forEach((path: string) => {
-    let result
     if (isUrl(path)) {
-      result = {
+      results.push({
         path,
         type: TargetType.Uri
-      }
+      })
     } else if (fs.existsSync(path)) {
-      if (fs.lstatSync(path).isDirectory()) {
+      if (isDirectory(path)) {
         const files = fs.readdirSync(path)
         files.forEach((f) => {
-          result = {
-            path: f,
-            type: TargetType.File
+          // TODO check whether this is absolute path
+          if (!isDirectory(f)) {
+            results.push({
+              path: f,
+              type: TargetType.File
+            })
           }
         })
       } else {
-        result = {
+        results.push({
           path,
           type: TargetType.File
-        }
+        })
       }
-    }
-    if (!result) {
+    } else {
       throw new Error(`Invalid target ${path}`)
     }
-    results.push(result)
   })
 
   return results

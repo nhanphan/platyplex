@@ -2,6 +2,7 @@ import { Argument, Command, Option, program } from 'commander'
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import util from 'util'
 import {
+  Creator,
   Metadata,
   MetadataData,
   MetadataDataData,
@@ -111,8 +112,12 @@ Attributes:`)
 
 export const validateMetadata = (metadata: MetadataJson) => {
   if (!metadata.name) {
-    // TODO check max name size
     log.error('invalid name')
+    return false
+  }
+
+  if (metadata.name.length > 32) {
+    log.error('name too long')
     return false
   }
   if (!metadata.image) {
@@ -187,6 +192,7 @@ export const update = (program: Command) => {
     .option('-m, --mint <mint>', 'mint address')
     .option('-a, --address <address>', 'metadata address')
     .option('--no-details', 'hide metadata before/after')
+    .option('--sign', 'also sign relevant creator address if it matches the wallet')
     .option('--new-update-authority <pubkey>', 'change to a new update authority')
     // TODO update auth only
     .addOption(new Option('--upload-provider <provider>', 'storage provider if a local filepath is specified for the metadata json').choices(['arweave']))
@@ -195,7 +201,7 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
     `)
     .action(async (uri, options) => {
       const config = loadConfig(options)
-      const { address, mint, uploadProvider, details, newUpdateAuthority } = options
+      const { address, mint, uploadProvider, details, newUpdateAuthority, sign } = options
       if ((!mint && !address) || (mint && address)) {
         fatalError('either --address or --mint must be provided')
       }
@@ -230,13 +236,17 @@ Update a mutable Token Metadata. WARNING gas/upload fees will apply!
         log.info(util.inspect(newMeta))
       }
       const data = new MetadataDataData({
-        creators: newMeta.properties.creators,
+        creators: newMeta.properties.creators.map((c) => {
+          return new Creator({
+            ...c,
+            verified: sign && c.address === config.keypair.publicKey.toBase58()
+          })
+        }),
         symbol: newMeta.symbol,
         uri: url,
         sellerFeeBasisPoints: newMeta.seller_fee_basis_points,
         name: newMeta.name,
       })
-
       const wallet = new Wallet(config.keypair)
       const updateTx = new UpdateMetadata(
         { feePayer: wallet.publicKey },
@@ -333,7 +343,6 @@ export const list = (program: Command) => {
       const metaList = metas as Metadata[]
       if (mintOnly) {
         if (fetchOwner) {
-          const batches = batch(metaList, 20)
           const res = await batchMap<Metadata>(metaList, 20, async (meta) => {
             const mint = meta.data.mint
             const o = await getOwner(config.connection, mint)
