@@ -82,3 +82,8 @@ export const findTargets = (paths: string[]): Target[] => {
 
   return results
 }
+
+export const toCachePath = (p: string): string => {
+  const parsed = path.parse(p)
+  return `${parsed.dir}/${parsed.name}-cache.json`
+}

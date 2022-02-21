@@ -6,8 +6,9 @@ import { Connection, Keypair, PublicKey, sendAndConfirmTransaction, Transaction 
 
 import { loadConfig, registerPrefix } from './config'
 import { fatalError } from './lib/error'
-import { loadJson, saveJson } from './lib/fs'
+import { loadJson, saveJson, toCachePath } from './lib/fs'
 import { sendTransactionWithRetryWithKeypair } from './lib/transaction'
+import { exit } from 'process'
 
 interface AirdropItem {
   mint: string
@@ -99,10 +100,12 @@ const transfer = (program: Command) => {
 const airdrop = (program: Command) => {
   registerPrefix(program.command('airdrop'))
     .argument('<json>', 'JSON file for airdrop config of format: [{"mint": "mmmmmm..", "to": "aaaaa..."}, {...}, ...] The current owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
-    .option('--retry-cache <cache>', 'use cache to retry in an idempotent manner')
+    .option('--retry-cache-path <cache>', 'specify cache to retry in an idempotent manner. Default is <json> basename with "-cache.json" appended e.g. for "./dir/airdrop.json", the cache path would be "./dir/aidrop-cache.json"')
+    .option('--no-retry-cache', "don't use retry cache")
     .action(async (json, options) => {
       const { retryCache } = options
       const config = loadConfig(options)
+      log.info(`Loading airdrop config: ${json}`)
       const airdrops: AirdropItem[] = loadJson(json)
 
       if (!Array.isArray(airdrops)) {
@@ -115,11 +118,15 @@ const airdrop = (program: Command) => {
       }
 
       let cache: RetryCache = {}
-      if (retryCache && fs.existsSync(retryCache)) {
-        try {
-          cache = loadJson(retryCache)
-        } catch (e) {
-          fatalError('Could not load cache')
+      const retryCachePath = options.retryCachePath || toCachePath(json)
+      if (retryCache) {
+        log.info(`Using cache: ${retryCachePath}`)
+        if (retryCachePath && fs.existsSync(retryCachePath)) {
+          try {
+            cache = loadJson(retryCachePath)
+          } catch (e) {
+            fatalError('Could not load cache')
+          }
         }
       }
       let errors = 0
@@ -136,7 +143,7 @@ const airdrop = (program: Command) => {
             cache[mint].txid = txid
             cache[mint].date = new Date().toISOString()
             if (retryCache) {
-              saveJson(retryCache, cache)
+              saveJson(retryCachePath, cache)
             }
           } catch (e) {
             log.error(`Failed to transfer ${a.mint}`)
