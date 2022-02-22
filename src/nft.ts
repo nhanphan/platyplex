@@ -102,9 +102,11 @@ const airdrop = (program: Command) => {
     .argument('<json>', 'JSON file for airdrop config of format: [{"mint": "mmmmmm..", "to": "aaaaa..."}, {...}, ...] The current owner of the NFTs must be the same as the keypair provided in the env or .platyplex config')
     .option('--retry-cache-path <cache>', 'specify cache to retry in an idempotent manner. Default is <json> basename with "-cache.json" appended e.g. for "./dir/airdrop.json", the cache path would be "./dir/aidrop-cache.json"')
     .option('--no-retry-cache', "don't use retry cache")
+    .option('--retries <num>', 'number of times to retry if any specific airdrop fails. Only valid if using retry cache. Defaults to 3 times')
     .action(async (json, options) => {
       const { retryCache } = options
       const config = loadConfig(options)
+      const retries = retryCache ? options.retries || 3 : 1
       log.info(`Loading airdrop config: ${json}`)
       const airdrops: AirdropItem[] = loadJson(json)
 
@@ -129,31 +131,42 @@ const airdrop = (program: Command) => {
           }
         }
       }
-      let errors = 0
-      for (const a of airdrops) {
-        const { mint, to } = a
-        cache[mint] = cache[mint] || {
-          to,
-          date: new Date().toISOString()
-        }
-        if (!cache[mint].txid) {
-          try {
-            const { txid } = await doTransfer(config.connection, mint, config.keypair, to)
-            log.info(`Successfully transferred ${mint} from ${config.keypair.publicKey.toBase58()} to ${to} tx: ${txid}`)
-            cache[mint].txid = txid
-            cache[mint].date = new Date().toISOString()
-            if (retryCache) {
-              saveJson(retryCachePath, cache)
+      const doAirdrop = async () => {
+        let errors = 0
+        for (const a of airdrops) {
+          const { mint, to } = a
+          cache[mint] = cache[mint] || {
+            to,
+            date: new Date().toISOString()
+          }
+          if (!cache[mint].txid) {
+            try {
+              const { txid } = await doTransfer(config.connection, mint, config.keypair, to)
+              log.info(`Successfully transferred ${mint} from ${config.keypair.publicKey.toBase58()} to ${to} tx: ${txid}`)
+              cache[mint].txid = txid
+              cache[mint].date = new Date().toISOString()
+              if (retryCache) {
+                saveJson(retryCachePath, cache)
+              }
+            } catch (e) {
+              log.error(`Failed to transfer ${a.mint}`)
+              log.debug(e)
+              errors++
             }
-          } catch (e) {
-            log.error(`Failed to transfer ${a.mint}`)
-            log.debug(e)
-            errors++
           }
         }
+        log.info(`Tried airdrop with ${errors} errors`)
+        return errors
       }
-      log.info(`Completed with ${errors} errors`)
-
+      let lastErrors = 0
+      for (let i = 0; i < retries; i++) {
+        log.info(`Try ${i}`)
+        lastErrors = await doAirdrop()
+        if (lastErrors <= 0) {
+          break
+        }
+      }
+      log.info(`Airdrop complete with ${lastErrors} errors`)
     })
 }
 
